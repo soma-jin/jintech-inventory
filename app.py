@@ -2,6 +2,9 @@ import streamlit as st
 import pandas as pd
 import sqlite3
 import datetime
+import io
+from openpyxl import Workbook
+from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
 
 # 1. 웹 페이지 기본 레이아웃 및 타이틀
 st.set_page_config(
@@ -50,7 +53,6 @@ init_db()
 # -------------------------------------------------------------------
 with st.sidebar:
     try:
-        # 아담하고 선명하게 너비 120px 고정!
         st.image("logo.webp", width=120)
     except:
         st.markdown("### 🏬 JINTECH\nSmart System")
@@ -84,6 +86,66 @@ def get_history(limit=50):
     return df
 
 # -------------------------------------------------------------------
+# 엑셀 변환/다운로드용 엔진 함수 (openpyxl 활용)
+# -------------------------------------------------------------------
+def generate_excel_log():
+    conn = sqlite3.connect(DB_NAME)
+    query = """
+        SELECT h.date AS '날짜', h.name AS '품목명', h.division AS '구분', h.qty AS '수량', 
+               i.price AS '단가', (h.qty * i.price) AS '금액', h.manager AS '담당자/작업자', h.note AS '비고'
+        FROM history h LEFT JOIN items i ON h.name = i.name ORDER BY h.date ASC, h.id ASC
+    """
+    df = pd.read_sql_query(query, conn)
+    conn.close()
+    
+    output = io.BytesIO()
+    with pd.ExcelWriter(output, engine='openpyxl') as writer:
+        df.to_excel(writer, index=False, sheet_name='입출고로그')
+    return output.getvalue()
+
+def generate_monthly_report(s_date, e_date):
+    conn = sqlite3.connect(DB_NAME)
+    query_out = f"""
+        SELECT h.date AS '출고일자', h.name AS '품목명', h.qty AS '출고수량', i.price AS '단가', 
+               (h.qty * i.price) AS '출고금액', h.manager AS '작업자(가져간사람)', h.note AS '비고' 
+        FROM history h LEFT JOIN items i ON h.name = i.name
+        WHERE h.division='출고' AND h.date BETWEEN '{s_date}' AND '{e_date}'
+        ORDER BY h.date ASC, h.id ASC
+    """
+    df_out = pd.read_sql_query(query_out, conn)
+
+    query_in = f"""
+        SELECT h.date AS '입고일자', h.name AS '품목명', h.qty AS '입고수량', i.price AS '단가', 
+               (h.qty * i.price) AS '입고금액', h.manager AS '입고처(발주업체)', h.note AS '비고' 
+        FROM history h LEFT JOIN items i ON h.name = i.name
+        WHERE h.division='입고' AND h.date BETWEEN '{s_date}' AND '{e_date}'
+        ORDER BY h.date ASC, h.id ASC
+    """
+    df_in = pd.read_sql_query(query_in, conn)
+    conn.close()
+
+    wb = Workbook()
+    ws_default = wb.active
+
+    # 출고 대장
+    ws_out = wb.create_sheet(title="출고 대장")
+    ws_out.append(["출고일자", "품목명", "출고수량", "단가", "출고금액", "작업자(가져간사람)", "비고"])
+    for r in df_out.values.tolist():
+        ws_out.append(r)
+
+    # 입고 대장
+    ws_in = wb.create_sheet(title="입고 대장")
+    ws_in.append(["입고일자", "품목명", "입고수량", "단가", "입고금액", "입고처(발주업체)", "비고"])
+    for r in df_in.values.tolist():
+        ws_in.append(r)
+
+    wb.remove(ws_default)
+    
+    output = io.BytesIO()
+    wb.save(output)
+    return output.getvalue()
+
+# -------------------------------------------------------------------
 # 1. 🔄 입출고 관리 메뉴
 # -------------------------------------------------------------------
 if menu == "🔄 입출고 관리":
@@ -99,10 +161,8 @@ if menu == "🔄 입출고 관리":
         st.subheader("📝 데이터 장부 입력")
         with st.form("history_form", clear_on_submit=True):
             ent_date = st.date_input("날짜", datetime.date.today())
-            
             selected_item = st.selectbox("품목 선택", item_list)
             
-            # 단가 정보 실시간 안내
             current_price = 0
             if not items_df.empty and selected_item in items_df["name"].values:
                 current_price = items_df.loc[items_df["name"] == selected_item, "price"].values[0]
@@ -117,7 +177,6 @@ if menu == "🔄 입출고 관리":
                 manager = st.text_input("입고처 (주문/발주 업체명)", placeholder="예: 대성자재 (생략 시 '주문업체 수령')")
             
             note = st.text_input("비고 메모", placeholder="특이사항 기재")
-            
             btn_submit = st.form_submit_button("📥 내역 등록 및 재고 반영", use_container_width=True, type="primary")
             
             if btn_submit:
@@ -156,6 +215,16 @@ if menu == "🔄 입출고 관리":
 
         st.subheader("📜 입출고 추적 로그 내역 (최근 50건)")
         st.dataframe(get_history(50), use_container_width=True, hide_index=True)
+        
+        # ✨ [출력 복원] 입출고 전체 로그 엑셀 다운로드 버튼
+        excel_data = generate_excel_log()
+        st.download_button(
+            label="💚 입출고 기록 로그 전체 엑셀 파일로 내보내기",
+            data=excel_data,
+            file_name=f"진테크_부자재_전체로그장부_{datetime.date.today().strftime('%Y%m%d')}.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            use_container_width=True
+        )
 
 # -------------------------------------------------------------------
 # 2. 📊 실시간 재고 모니터링 메뉴
@@ -214,8 +283,29 @@ elif menu == "📊 실시간 재고 모니터링":
         else:
             st.info("누적된 출고 내역이 없습니다.")
 
+    st.markdown("---")
+    
+    # ✨ [출력 복원] 월간 종합 정산 & 결산 내보내기실 
+    st.subheader("🗓️ 월간 종합 정산 및 기간별 결산 내보내기실")
+    col_d1, col_d2, col_d3 = st.columns([1, 1, 2])
+    with col_d1:
+        s_date = st.date_input("조회 시작일", datetime.date.today().replace(day=1))
+    with col_d2:
+        e_date = st.date_input("조회 종료일", datetime.date.today())
+    with col_d3:
+        st.write("") # 높이 맞춤용
+        monthly_data = generate_monthly_report(str(s_date), str(e_date))
+        st.download_button(
+            label="📊 지정 기간 통합 결산보고서 양식 출력 (출고/입고금액 수식 자동 계산)",
+            data=monthly_data,
+            file_name=f"진테크_부자재_종합결산보고서_({s_date}_to_{e_date}).xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            use_container_width=True,
+            type="primary"
+        )
+
 # -------------------------------------------------------------------
-# 3. 👥 시스템 마스터 등록 관리 메뉴 (삭제 기능 포함)
+# 3. 👥 시스템 마스터 등록 관리 메뉴
 # -------------------------------------------------------------------
 elif menu == "👥 시스템 마스터 등록 관리":
     st.title("👥 진테크 마스터 인프라 등록 관리 통제실")
