@@ -2,9 +2,6 @@ import streamlit as st
 import pandas as pd
 import sqlite3
 import datetime
-import io
-from openpyxl import Workbook
-from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
 
 # 1. 웹 페이지 기본 레이아웃 및 타이틀
 st.set_page_config(
@@ -49,11 +46,12 @@ def init_db():
 init_db()
 
 # -------------------------------------------------------------------
-# [사이드바 메뉴 설정]
+# [사이드바 메뉴 설정 - 로고 크기 완벽 조정!]
 # -------------------------------------------------------------------
 with st.sidebar:
     try:
-        st.image("logo.webp", use_container_width=True)
+        # 아담하고 선명하게 너비 120px 고정!
+        st.image("logo.webp", width=120)
     except:
         st.markdown("### 🏬 JINTECH\nSmart System")
     
@@ -142,7 +140,6 @@ if menu == "🔄 입출고 관리":
 
     with col_right:
         st.subheader("📊 요약 품목별 현재고 실시간 현황")
-        # 현재고 계산
         conn = sqlite3.connect(DB_NAME)
         history_all = pd.read_sql_query("SELECT name, division, qty FROM history", conn)
         conn.close()
@@ -218,7 +215,7 @@ elif menu == "📊 실시간 재고 모니터링":
             st.info("누적된 출고 내역이 없습니다.")
 
 # -------------------------------------------------------------------
-# 3. 👥 시스템 마스터 등록 관리 메뉴 (✨ 완벽 삭제 기능 추가!)
+# 3. 👥 시스템 마스터 등록 관리 메뉴 (삭제 기능 포함)
 # -------------------------------------------------------------------
 elif menu == "👥 시스템 마스터 등록 관리":
     st.title("👥 진테크 마스터 인프라 등록 관리 통제실")
@@ -258,7 +255,6 @@ elif menu == "👥 시스템 마스터 등록 관리":
         items_df = get_items()
         st.dataframe(items_df, use_container_width=True, hide_index=True)
         
-        # ✨ [버그 수정 1] 부자재 품목 삭제 기능 구현
         if not items_df.empty:
             del_item_target = st.selectbox("삭제할 부자재 선택", items_df["name"].tolist(), key="del_item_select")
             if st.button("❌ 선택 품목 삭제", type="primary", use_container_width=True):
@@ -298,7 +294,6 @@ elif menu == "👥 시스템 마스터 등록 관리":
         workers_list = get_workers()
         st.dataframe(pd.DataFrame(workers_list, columns=["등록된 작업자 명단"]), use_container_width=True, hide_index=True)
         
-        # ✨ [버그 수정 2] 작업자 삭제 기능 구현
         if workers_list:
             del_worker_target = st.selectbox("삭제할 작업자 선택", workers_list, key="del_worker_select")
             if st.button("❌ 선택 작업자 삭제", type="primary", use_container_width=True):
